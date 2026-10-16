@@ -2,16 +2,22 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
 type MonitoringStatus struct {
-	Healthy             bool   `json:"healthy"`
-	ConsecutiveFailures int    `json:"consecutive_failures"`
-	ResponseTime        string `json:"response_time"`
+	Healthy              bool   `json:"healthy"`
+	ConsecutiveFailures  int    `json:"consecutive_failures"`
+	ResponseTime         string `json:"response_time"`
+	MemoryTotalBytes     uint64 `json:"memory_total_bytes"`
+	MemoryAvailableBytes uint64 `json:"memory_available_bytes"`
 }
 
 var (
@@ -21,6 +27,43 @@ var (
 		ResponseTime: "not checked",
 	}
 )
+
+func readMemory() (uint64, uint64, error) {
+	data, err := os.ReadFile("/proc/meminfo")
+
+	if err != nil {
+		return 0, 0, err
+	}
+
+	var total uint64
+	var available uint64
+
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		value, err := strconv.ParseUint(fields[1], 10, 64)
+
+		if err != nil {
+			return 0, 0, err
+		}
+
+		switch fields[0] {
+		case "MemTotal:":
+			total = value
+		case "MemAvailable:":
+			available = value
+		}
+	}
+
+	if total == 0 || available == 0 {
+		return 0, 0, fmt.Errorf("memory information not found")
+	}
+
+	return total * 1024, available * 1024, nil
+}
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	statusMutex.RLock()
@@ -82,11 +125,19 @@ func main() {
 			}
 		}
 
+		memoryTotal, memoryAvailable, err := readMemory()
+
+		if err != nil {
+			log.Printf("MEMORY ERROR: %v", err)
+		}
+
 		statusMutex.Lock()
 		currentStatus = MonitoringStatus{
-			Healthy:             healthy,
-			ConsecutiveFailures: consecutiveFailures,
-			ResponseTime:        response_time,
+			Healthy:              healthy,
+			ConsecutiveFailures:  consecutiveFailures,
+			ResponseTime:         response_time,
+			MemoryTotalBytes:     memoryTotal,
+			MemoryAvailableBytes: memoryAvailable,
 		}
 		statusMutex.Unlock()
 
