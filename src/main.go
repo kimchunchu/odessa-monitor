@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type MonitoringStatus struct {
@@ -18,6 +20,8 @@ type MonitoringStatus struct {
 	ResponseTime         string `json:"response_time"`
 	MemoryTotalBytes     uint64 `json:"memory_total_bytes"`
 	MemoryAvailableBytes uint64 `json:"memory_available_bytes"`
+	DiskTotalBytes       uint64 `json:"disk_total_bytes"`
+	DiskAvailableBytes   uint64 `json:"disk_available_bytes"`
 }
 
 var (
@@ -27,6 +31,19 @@ var (
 		ResponseTime: "not checked",
 	}
 )
+
+func readDisk() (uint64, uint64, error) {
+	var stat unix.Statfs_t
+
+	if err := unix.Statfs("/", &stat); err != nil {
+		return 0, 0, err
+	}
+
+	total := stat.Blocks * uint64(stat.Bsize)
+	available := stat.Bavail * uint64(stat.Bsize)
+
+	return total, available, nil
+}
 
 func readMemory() (uint64, uint64, error) {
 	data, err := os.ReadFile("/proc/meminfo")
@@ -131,6 +148,12 @@ func main() {
 			log.Printf("MEMORY ERROR: %v", err)
 		}
 
+		diskTotal, diskAvailable, err := readDisk()
+
+		if err != nil {
+			log.Printf("DISK ERROR: %v", err)
+		}
+
 		statusMutex.Lock()
 		currentStatus = MonitoringStatus{
 			Healthy:              healthy,
@@ -138,6 +161,8 @@ func main() {
 			ResponseTime:         response_time,
 			MemoryTotalBytes:     memoryTotal,
 			MemoryAvailableBytes: memoryAvailable,
+			DiskTotalBytes:       diskTotal,
+			DiskAvailableBytes:   diskAvailable,
 		}
 		statusMutex.Unlock()
 
